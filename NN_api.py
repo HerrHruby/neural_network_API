@@ -12,6 +12,7 @@ Ian Wu
 """
 
 import numpy as np
+import pickle
 
 
 class Layer:
@@ -20,14 +21,12 @@ class Layer:
             input_dim: dimensions of the previous layer
             output_dim: dimensions of the next layer
             w: weight matrix associated with the layer
-            w_gradient: weight gradients associated with the layer
             w_momentum: weight momentum associated with the layer
             b: bias vector associated with the layer
-            b_gradient: bias gradients associated with the layer
             b_momentum: bias momentum associated with the layer
             activation: activation associated with the layer
             data: data (post activation) contained in the layer
-            cache: data (pre-activiation) contained in the layer
+            cache: data (pre-activation) contained in the layer
             state: layer type (input, hidden or output)
             next_layer: points to the next layer
             previous_layer: points to the previous layer
@@ -43,12 +42,10 @@ class Layer:
         self.output_dim = output_dim
         if self.input_dim and self.output_dim:
             self.w = np.random.normal(0, (1/self.input_dim), size=(self.output_dim, self.input_dim))  # "Xavier" Init.
-            self.w_gradient = np.zeros((self.output_dim, self.input_dim))
             self.w_momentum = np.zeros((self.output_dim, self.input_dim))
         if self.output_dim:
-            self.b = np.zeros((self.output_dim,))
-            self.b_gradient = np.zeros((self.output_dim,))
-            self.b_momentum = np.zeros((self.output_dim,))
+            self.b = np.zeros((self.output_dim, ))
+            self.b_momentum = np.zeros((self.output_dim, ))
         self.activation = activation
         self.next_layer = None
         self.previous_layer = None
@@ -79,22 +76,6 @@ class Layer:
     def set_b(self, b):
         """Set bias vector"""
         self.b = b
-
-    def get_w_gradient(self):
-        """Get weight gradient"""
-        return self.w_gradient
-
-    def set_w_gradient(self, w_grad):
-        """Set weight gradient"""
-        self.w_gradient = w_grad
-
-    def get_b_gradient(self):
-        """Get bias gradient"""
-        return self.b_gradient
-
-    def set_b_gradient(self, b_grad):
-        """Set bias gradient"""
-        self.b_gradient = b_grad
 
     def get_w_momentum(self):
         """Get weight momentum"""
@@ -147,7 +128,7 @@ class Layer:
     def compute_data(self):
         """Transform the input into the layer (affine and then activation)"""
         data = self.get_prev_layer().get_data()  # get the data from the layer before
-        data = np.matmul(self.w, data) + self.b  # affine transformation
+        data = np.matmul(self.w, data) + self.b.reshape(-1, 1)  # affine transformation
         self.cache = data  # save the affine transform in self.cache
         self.data = self.activate(data)  # save the activated data in self.data
 
@@ -157,6 +138,38 @@ class Layer:
             return 1 / (1 + np.exp(-z))
         elif self.activation == 'relu':
             return np.maximum(0, z)
+
+    def gradient_descent(self, learning_rate, batch_size, d_cost_b, d_cost_w):
+        """Performs a step of gradient descent for all layers, for weights and biases
+            Parameters:
+                learning_rate: the learning rate for gradient descent
+                batch_size: the batch size of data
+                d_cost_b: grad b
+                d_cost_w: grad w
+        """
+        new_w = self.get_w() - (learning_rate * (1/batch_size) * d_cost_w)
+        self.set_w(new_w)  # update w as w := w - (learning_rate/batch_size) * grad_w
+        new_b = self.get_b() - (learning_rate * (1/batch_size) * d_cost_b)
+        self.set_b(new_b)  # update b as b := b - (learning_rate/batch_size) * grad_b
+
+    def momentum(self, learning_rate, batch_size, decay_rate, d_cost_b, d_cost_w):
+        """Performs a step of momentum gradient descent for all layers, for weights and biases
+            Parameters:
+                learning_rate: the learning rate for gradient descent
+                batch_size: the batch size of data
+                decay_rate: the decay rate for momentum
+                d_cost_b: grad b
+                d_cost_w: grad w
+
+        """
+        grad_desc_w = learning_rate * (1/batch_size) * d_cost_w
+        grad_desc_b = learning_rate * (1/batch_size) * d_cost_b
+        delta_w = decay_rate * self.get_w_momentum() - grad_desc_w
+        delta_b = decay_rate * self.get_b_momentum() - grad_desc_b
+        self.set_w(self.get_w() + delta_w)
+        self.set_b(self.get_b() + delta_b)
+        self.set_w_momentum(delta_w)
+        self.set_b_momentum(delta_b)
 
 
 class Dense:
@@ -178,6 +191,13 @@ class Dense:
         self.loss = None
         self.metric = None
         self.optimiser = None
+        self.name = None
+
+    def set_name(self, name):
+        self.name = name
+
+    def get_name(self):
+        return self.name
 
     def add_layer(self, activation, input_dim, output_dim):
         """Add a layer to the neural network"""
@@ -200,72 +220,40 @@ class Dense:
 
         return self.tail.get_data()  # return the final transformed data
 
-    def backward_propagate(self, outputs, labels):
+    def backward_propagate(self, outputs, labels, batch_size):
         """Perform a single pass of backward propagation"""
         current_layer = self.tail  # start at the tail (output layer L)
         activation = current_layer.get_activation()
-        del_l = (outputs - labels) * self.activation_prime(current_layer.get_cache(), activation)
+        del_l = None
+        if self.loss == 'MSE':
+            del_l = (outputs - labels) * self.activation_prime(current_layer.get_cache(), activation)
         # derivative of the loss wrt the affine transformed data of the output layer L
-        d_cost_b = del_l  # derivative of cost wrt bias of output layer L
-        d_cost_w = np.outer(del_l, current_layer.get_prev_layer().get_data())
+        d_cost_b = np.sum(del_l, axis=1)  # derivative of cost wrt bias of output layer L
+        d_cost_w = np.matmul(del_l, current_layer.get_prev_layer().get_data().T)
         # derivative of cost wrt weights of output layer L
-        current_layer.set_b_gradient(d_cost_b + current_layer.get_b_gradient())  # update the weight gradient
-        current_layer.set_w_gradient(d_cost_w + current_layer.get_w_gradient())  # update the bias gradient
+        if self.optimiser[0] == 'gradient_descent':
+            current_layer.gradient_descent(learning_rate=self.optimiser[1], batch_size=batch_size, d_cost_w=d_cost_w,
+                                           d_cost_b=d_cost_b)
+        elif self.optimiser[0] == 'momentum':
+            current_layer.momentum(learning_rate=self.optimiser[1], batch_size=batch_size, d_cost_w=d_cost_w,
+                                   d_cost_b=d_cost_b, decay_rate=self.optimiser[2])
         current_layer = current_layer.get_prev_layer()
-        # iterate through all layers l = L-1, L-2,...,3, 2
         while current_layer.get_state() != 'input':
             prev_layer = current_layer.get_prev_layer()
             activation = current_layer.get_activation()
-            del_l = np.matmul(current_layer.get_next_layer().get_w().T, del_l) * \
-                    self.activation_prime(current_layer.get_cache(), activation)
+            if self.loss == 'MSE':
+                del_l = np.matmul(current_layer.get_next_layer().get_w().T, del_l) * \
+                        self.activation_prime(current_layer.get_cache(), activation)
             # derivative of loss wrt affine transformation of lth layer
-            d_cost_b = del_l  # derivative of loss wrt lth later bias
-            d_cost_w = np.outer(del_l, prev_layer.get_data())  # derivative of loss wrt lth layer weights
-            current_layer.set_b_gradient(d_cost_b + current_layer.get_b_gradient())  # update bias gradients
-            current_layer.set_w_gradient(d_cost_w + current_layer.get_w_gradient())  # update weight gradients
-            current_layer = prev_layer  # step into layer l-1
-
-    def gradient_descent(self, learning_rate, batch_size):
-        """Performs a step of gradient descent for all layers, for weights and biases
-            Parameters:
-                learning_rate: the learning rate for gradient descent
-                batch_size: the batch size of data
-        """
-        current_layer = self.head  # start at input layer
-        # step through all layers
-        while current_layer.get_next_layer():
-            current_layer = current_layer.get_next_layer()
-            new_w = current_layer.get_w() - (learning_rate * (1/batch_size) * current_layer.get_w_gradient())
-            current_layer.set_w(new_w)  # update w as w := w - (learning_rate/batch_size) * grad_w
-            new_b = current_layer.get_b() - (learning_rate * (1/batch_size) * current_layer.get_b_gradient())
-            current_layer.set_b(new_b)  # update b as b := b - (learning_rate/batch_size) * grad_b
-            # zero all the gradients
-            current_layer.set_w_gradient(np.zeros((current_layer.output_dim, current_layer.input_dim)))
-            current_layer.set_b_gradient(np.zeros((current_layer.output_dim, )))
-
-    def momentum(self, learning_rate, batch_size, decay_rate):
-        """Performs a step of momentum gradient descent for all layers, for weights and biases
-            Parameters:
-                learning_rate: the learning rate for gradient descent
-                batch_size: the batch size of data
-                decay_rate: the decay rate for momentum
-        """
-        current_layer = self.head  # start at input layer
-        # step through all layers
-        while current_layer.get_next_layer():
-            current_layer = current_layer.get_next_layer()
-            update_w = learning_rate * (1 / batch_size) * current_layer.get_w_gradient()
-            update_b = learning_rate * (1 / batch_size) * current_layer.get_b_gradient()
-            current_layer.set_w_momentum(decay_rate * current_layer.get_w_momentum() +
-                                         update_w)  # update weight momentum
-            current_layer.set_b_momentum(decay_rate * current_layer.get_b_momentum() +
-                                         update_b)  # update bias momentum
-            new_w = current_layer.get_w() - current_layer.get_w_momentum()
-            current_layer.set_w(new_w)  # update w := w - (learning_rate/batch_size) * grad_w + (decay_rate * momentum)
-            new_b = current_layer.get_b() - current_layer.get_b_momentum()
-            current_layer.set_b(new_b)  # update b := b - (learning_rate/batch_size) * grad_b + (decay_rate * momentum)
-            current_layer.set_w_gradient(np.zeros((current_layer.output_dim, current_layer.input_dim)))  # zero grad_w
-            current_layer.set_b_gradient(np.zeros((current_layer.output_dim,)))  # zero grad_b
+            d_cost_b = np.sum(del_l, axis=1)  # derivative of loss wrt lth layer bias
+            d_cost_w = np.matmul(del_l, prev_layer.get_data().T)  # derivative of loss wrt lth layer weights
+            if self.optimiser[0] == 'gradient_descent':
+                current_layer.gradient_descent(learning_rate=self.optimiser[1], batch_size=batch_size, d_cost_w=d_cost_w,
+                                               d_cost_b=d_cost_b)
+            elif self.optimiser[0] == 'momentum':
+                current_layer.momentum(learning_rate=self.optimiser[1], batch_size=batch_size, d_cost_w=d_cost_w,
+                                       d_cost_b=d_cost_b, decay_rate=self.optimiser[2])
+            current_layer = prev_layer
 
     def compile(self, optimiser, loss, metric, learning_rate=0.005, decay_rate=0.9):
         """Compile the neural network. Set the optimiser, loss, metric, learning and decay rates
@@ -280,9 +268,10 @@ class Dense:
         self.optimiser = optimiser
         self.loss = loss
         self.metric = metric
+        print(self.optimiser)
 
     def fit(self, input_data, labels, epochs, shuffle_input=True, shuffle_validate=True, batch_size=None,
-            validate=False, validation_data=None, validation_labels=None):
+            validate=False, validation_data=None, validation_labels=None, save_data=False):
         """Train the neural network on the training data. Optionally, perform validation after every epoch
             Parameters:
                 input_data: training data
@@ -294,83 +283,76 @@ class Dense:
                 validate: perform validation at the end of each epoch (True/False, default=False)
                 validation_data: validation data
                 validation_labels: validation data labels
+                save_data: save the training and validation losses and metrics
         """
         epoch = 0
-        optimiser_type = self.optimiser[0]
-        learning_rate = self.optimiser[1]
-        results = [None, None]  # contains the final losses and metrics
+        final_results = [None, None]  # contains the final losses and metrics
+        save_train_results = []
+        save_val_results = []
         while epoch < epochs:
             print('--------------------------------------------')
             print('Epoch {}/{}'.format(epoch + 1, epochs))
             epoch_loss = 0
             epoch_metric = 0
-            # shuffle the dataset and labels together if shuffle_input=True
-            if shuffle_input:
-                indices = np.arange(input_data.shape[0])
-                np.random.shuffle(indices)
-                input_data = input_data[indices]
-                labels = labels[indices]
-            cycle = 1
-            last_optimise_step = 0  # track the cycle of the last optimisation step
             # if batch size not specified, assume full-batch
             if not batch_size:
                 batch_size = len(input_data)
             # iterate through all the data points and labels
-            for datapoint, label in zip(input_data, labels):
+            for batch in self.generate_batch(input_data, labels, batch_size, shuffle_input=shuffle_input):
                 # do forward prop and update metric and losses
-                predictions = self.forward_propagate(datapoint)
+                data_point = batch[0]
+                label = batch[1]
+                predictions = self.forward_propagate(data_point)
                 if self.metric == 'binary_accuracy':
-                    if round(predictions[0]) == label[0]:
-                        epoch_metric += 1
+                    epoch_metric += np.sum(np.round(predictions[0]) == label[0])
                 epoch_loss += self.compute_loss(predictions, label, self.loss)
-                self.backward_propagate(predictions, label)  # back prop
-                # perform optimisation if mini-batch is complete. If last cycle reached, optimise as well
-                if cycle % batch_size == 0 or cycle == len(input_data):
-                    if optimiser_type == 'gradient_descent':
-                        # standard gradient descent. Batch size = no. of data points since last optimisation step
-                        self.gradient_descent(learning_rate, cycle - last_optimise_step)
-                    elif optimiser_type == 'momentum':
-                        decay_rate = self.optimiser[2]
-                        # gradient descent w. momentum. Batch size = no. of data points since last optimisation step
-                        self.momentum(learning_rate, cycle - last_optimise_step, decay_rate=decay_rate)
-                    last_optimise_step = cycle
-                cycle += 1
+                self.backward_propagate(predictions, label, batch_size=len(data_point[0]))  # back prop
             epoch_loss = epoch_loss/len(input_data)  # compute average loss for this epoch
             print('Epoch {} Complete'.format(epoch + 1))
             print('Epoch Training Loss: {}'.format(epoch_loss))
             epoch_metric = float(epoch_metric/len(input_data))  # compute average metric for this epoch
             if self.metric == 'binary_accuracy':
                 print('Epoch Training Accuracy: {}'.format(epoch_metric))
-            results[0] = (epoch_loss, epoch_metric)  # store the final results
+            final_results[0] = (epoch_loss, epoch_metric)  # store the final results
+            if save_data:
+                save_train_results.append((epoch_loss, epoch_metric))
+
             epoch += 1
 
             if validate:  # do validation step after every epoch if validate=True
                 validation_loss = 0
                 validation_metric = 0
-                # shuffle the validation data and labels if shuffle_validate=True
-                if shuffle_validate:
-                    indices = np.arange(validation_data.shape[0])
-                    np.random.shuffle(indices)
-                    validation_data = validation_data[indices]
-                    validation_labels = validation_labels[indices]
                 # iterate through validation data and labels
-                for datapoint, label in zip(validation_data, validation_labels):
-                    predictions = self.predict(datapoint)  # make prediction
+                for batch in self.generate_batch(validation_data, validation_labels, batch_size=len(validation_data),
+                                                 shuffle_input=shuffle_validate):
+                    data_point = batch[0]
+                    label = batch[1]
+                    predictions = self.predict(data_point)  # make prediction
                     validation_loss += self.compute_loss(predictions, label, self.loss)  # get loss
                     if self.metric == 'binary_accuracy':  # get metric
-                        if round(predictions[0]) == label[0]:
-                            validation_metric += 1
+                        validation_metric += np.sum(np.round(predictions[0]) == label[0])
                 validation_loss = validation_loss/len(validation_data)  # average validation loss for epoch
-                validation_metric = float(validation_metric/len(validation_data))  # average validation metric for epoch
+                validation_metric = validation_metric/len(validation_data)  # average validation metric for epoch
                 print('Epoch Validation Loss: {}'.format(validation_loss))
                 if self.metric == 'binary_accuracy':
                     print('Epoch Validation Accuracy: {}'.format(validation_metric))
-                results[1] = (validation_loss, validation_metric)  # store results
+                final_results[1] = (validation_loss, validation_metric)  # store results
+                if save_data:
+                    save_val_results.append((validation_loss, validation_metric))
             print('--------------------------------------------')
-        print('Final Training Loss/Accuracy: {}'.format(results[0]))
-        print('Final Validation Loss/Accuracy: {}'.format(results[1]))
+        print('Final Training Loss/Accuracy: {}'.format(final_results[0]))
+        print('Final Validation Loss/Accuracy: {}'.format(final_results[1]))
 
-        return results
+        if save_data:
+            training_name = self.get_name() + '_training'
+            with open(training_name, 'wb') as fp:
+                pickle.dump(save_train_results, fp)
+            if validate:
+                val_name = self.get_name() + '_validation'
+                with open(val_name, 'wb') as fp:
+                    pickle.dump(save_val_results, fp)
+
+        return final_results
 
     def predict(self, input_data):
         """Predict on input data using the neural network"""
@@ -382,6 +364,23 @@ class Dense:
         """Compute the loss using a specified loss function"""
         if loss == 'MSE':
             return 0.5 * np.sum((outputs - labels) ** 2)
+
+    @staticmethod
+    def generate_batch(input_data, labels, batch_size, shuffle_input):
+        """Generate mini-batches of training data and labels"""
+        indices = None
+        # shuffle the data and labels simultaneously if shuffle_input=True
+        if shuffle_input:
+            indices = np.arange(input_data.shape[0])
+            np.random.shuffle(indices)
+        # generator for the mini-batches
+        for index in range(0, input_data.shape[0] - batch_size + 1, batch_size):
+            end_index = min(index + batch_size, input_data.shape[0])
+            if shuffle_input:
+                data_slice = indices[index:end_index]
+            else:
+                data_slice = slice(index, end_index)
+            yield input_data[data_slice].T, labels[data_slice].T
 
     @staticmethod
     def activation_prime(z, activation):
