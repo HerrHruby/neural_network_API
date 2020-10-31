@@ -4,11 +4,17 @@ The network itself is represented by the Dense class, which provides a reference
 provides a selection of methods to implement forwards and backwards backpropagation, fit data and make predictions.
 The layers in the network are represented by the Layer class, which are joined-up in a Linked List by the Dense object.
 
-TODO: more loss functions (cross-entropy, absolute error etc.), more activations (softmax, tanh etc.), more optimisers
-(adam, RMSProp etc.), "matrix style" propagation (rather than propagation datapoint by datapoint) for efficiency gains
+Currently Supported:
+    Loss functions: MSE, binary cross entropy
+    Activations: ReLU, Sigmoid
+    Optimisers: standard gradient descent, momentum
+    Tuning: Grid Search
+
+TODO: more loss functions (absolute error etc.), more activations (softmax, tanh etc.), more optimisers
+(adam, RMSProp etc.)
 
 Ian Wu
-29/10/2020
+31/10/2020
 """
 
 import numpy as np
@@ -140,7 +146,7 @@ class Layer:
             return np.maximum(0, z)
 
     def gradient_descent(self, learning_rate, batch_size, d_cost_b, d_cost_w):
-        """Performs a step of gradient descent for all layers, for weights and biases
+        """Performs a step of gradient descent for the layer, for weights and biases
             Parameters:
                 learning_rate: the learning rate for gradient descent
                 batch_size: the batch size of data
@@ -153,7 +159,7 @@ class Layer:
         self.set_b(new_b)  # update b as b := b - (learning_rate/batch_size) * grad_b
 
     def momentum(self, learning_rate, batch_size, decay_rate, d_cost_b, d_cost_w):
-        """Performs a step of momentum gradient descent for all layers, for weights and biases
+        """Performs a step of momentum gradient descent for the layer, for weights and biases
             Parameters:
                 learning_rate: the learning rate for gradient descent
                 batch_size: the batch size of data
@@ -162,14 +168,14 @@ class Layer:
                 d_cost_w: grad w
 
         """
-        grad_desc_w = learning_rate * (1/batch_size) * d_cost_w
-        grad_desc_b = learning_rate * (1/batch_size) * d_cost_b
-        delta_w = decay_rate * self.get_w_momentum() - grad_desc_w
-        delta_b = decay_rate * self.get_b_momentum() - grad_desc_b
-        self.set_w(self.get_w() + delta_w)
-        self.set_b(self.get_b() + delta_b)
-        self.set_w_momentum(delta_w)
-        self.set_b_momentum(delta_b)
+        grad_desc_w = learning_rate * (1/batch_size) * d_cost_w  # standard descent for w
+        grad_desc_b = learning_rate * (1/batch_size) * d_cost_b  # standard descent for b
+        delta_w = decay_rate * self.get_w_momentum() - grad_desc_w  # compute new w momentum
+        delta_b = decay_rate * self.get_b_momentum() - grad_desc_b  # compute new b momentum
+        self.set_w(self.get_w() + delta_w)  # update weights
+        self.set_b(self.get_b() + delta_b)  # update biases
+        self.set_w_momentum(delta_w)  # update w momentum
+        self.set_b_momentum(delta_b)  # update b momentum
 
 
 class Dense:
@@ -227,9 +233,15 @@ class Dense:
         del_l = None
         if self.loss == 'MSE':
             del_l = (outputs - labels) * self.activation_prime(current_layer.get_cache(), activation)
+        elif self.loss == 'binary_cross_entropy':
+            outputs[outputs == 0] += 1e-15  # prevent instability of log(0)
+            outputs[outputs == 1] -= 1e-15
+            del_l = ((outputs - labels)/(outputs * (1 - outputs))) * \
+                    self.activation_prime(current_layer.get_cache(), activation)
         # derivative of the loss wrt the affine transformed data of the output layer L
         d_cost_b = np.sum(del_l, axis=1)  # derivative of cost wrt bias of output layer L
-        d_cost_w = np.matmul(del_l, current_layer.get_prev_layer().get_data().T)
+        d_cost_w = np.matmul(del_l, current_layer.get_prev_layer().get_data().T)  # derivative of cost wrt
+        # weights of output layer L
         # derivative of cost wrt weights of output layer L
         if self.optimiser[0] == 'gradient_descent':
             current_layer.gradient_descent(learning_rate=self.optimiser[1], batch_size=batch_size, d_cost_w=d_cost_w,
@@ -241,9 +253,8 @@ class Dense:
         while current_layer.get_state() != 'input':
             prev_layer = current_layer.get_prev_layer()
             activation = current_layer.get_activation()
-            if self.loss == 'MSE':
-                del_l = np.matmul(current_layer.get_next_layer().get_w().T, del_l) * \
-                        self.activation_prime(current_layer.get_cache(), activation)
+            del_l = np.matmul(current_layer.get_next_layer().get_w().T, del_l) * \
+                    self.activation_prime(current_layer.get_cache(), activation)
             # derivative of loss wrt affine transformation of lth layer
             d_cost_b = np.sum(del_l, axis=1)  # derivative of loss wrt lth layer bias
             d_cost_w = np.matmul(del_l, prev_layer.get_data().T)  # derivative of loss wrt lth layer weights
@@ -287,8 +298,8 @@ class Dense:
         """
         epoch = 0
         final_results = [None, None]  # contains the final losses and metrics
-        save_train_results = []
-        save_val_results = []
+        save_train_results = []  # for recording training loss/metric per epoch
+        save_val_results = []  # for recording val loss/metric per epoch
         while epoch < epochs:
             print('--------------------------------------------')
             print('Epoch {}/{}'.format(epoch + 1, epochs))
@@ -297,16 +308,16 @@ class Dense:
             # if batch size not specified, assume full-batch
             if not batch_size:
                 batch_size = len(input_data)
-            # iterate through all the data points and labels
+            # get mini-batches from generator
             for batch in self.generate_batch(input_data, labels, batch_size, shuffle_input=shuffle_input):
                 # do forward prop and update metric and losses
                 data_point = batch[0]
                 label = batch[1]
-                predictions = self.forward_propagate(data_point)
+                predictions = self.forward_propagate(data_point)  # forward prop with batch training data
                 if self.metric == 'binary_accuracy':
                     epoch_metric += np.sum(np.round(predictions[0]) == label[0])
-                epoch_loss += self.compute_loss(predictions, label, self.loss)
-                self.backward_propagate(predictions, label, batch_size=len(data_point[0]))  # back prop
+                epoch_loss += self.compute_loss(predictions, label, self.loss)  # get the loss
+                self.backward_propagate(predictions, label, batch_size=len(data_point[0]))  # back prop + optimise
             epoch_loss = epoch_loss/len(input_data)  # compute average loss for this epoch
             print('Epoch {} Complete'.format(epoch + 1))
             print('Epoch Training Loss: {}'.format(epoch_loss))
@@ -315,14 +326,14 @@ class Dense:
                 print('Epoch Training Accuracy: {}'.format(epoch_metric))
             final_results[0] = (epoch_loss, epoch_metric)  # store the final results
             if save_data:
-                save_train_results.append((epoch_loss, epoch_metric))
+                save_train_results.append((epoch_loss, epoch_metric))  # record training loss/metric per epoch
 
             epoch += 1
 
             if validate:  # do validation step after every epoch if validate=True
                 validation_loss = 0
                 validation_metric = 0
-                # iterate through validation data and labels
+                # get full-batch from generator
                 for batch in self.generate_batch(validation_data, validation_labels, batch_size=len(validation_data),
                                                  shuffle_input=shuffle_validate):
                     data_point = batch[0]
@@ -338,11 +349,12 @@ class Dense:
                     print('Epoch Validation Accuracy: {}'.format(validation_metric))
                 final_results[1] = (validation_loss, validation_metric)  # store results
                 if save_data:
-                    save_val_results.append((validation_loss, validation_metric))
+                    save_val_results.append((validation_loss, validation_metric))  # record val loss/metric per epoch
             print('--------------------------------------------')
         print('Final Training Loss/Accuracy: {}'.format(final_results[0]))
         print('Final Validation Loss/Accuracy: {}'.format(final_results[1]))
 
+        # if save_data=True, dump all saved data to binary file
         if save_data:
             training_name = self.get_name() + '_training'
             with open(training_name, 'wb') as fp:
@@ -364,6 +376,10 @@ class Dense:
         """Compute the loss using a specified loss function"""
         if loss == 'MSE':
             return 0.5 * np.sum((outputs - labels) ** 2)
+        elif loss == 'binary_cross_entropy':
+            outputs[outputs == 0] += 1e-15  # prevent instability of log(0)
+            outputs[outputs == 1] -= 1e-15
+            return -np.sum(labels * np.log(outputs) + (1 - labels) * np.log(1 - outputs))
 
     @staticmethod
     def generate_batch(input_data, labels, batch_size, shuffle_input):
