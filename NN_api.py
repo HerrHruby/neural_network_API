@@ -37,7 +37,6 @@ class Layer:
             next_layer: points to the next layer
             previous_layer: points to the previous layer
     """
-
     def __init__(self, activation, input_dim, output_dim):
         """Initialise the Layer object
             activation: activation function
@@ -420,7 +419,6 @@ class GridSearchTuner:
             model: model to tune (pre-compilation)
             best_params: list of the best parameters
     """
-
     def __init__(self):
         """Initialise the GridSearchTuner object"""
         self.learning_rates = [0.01]
