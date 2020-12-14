@@ -2,19 +2,19 @@
 A simple Neural Network API. Provides a clean interface for building Deep Feedforward Neural Networks.
 The network itself is represented by the Dense class, which provides a reference to the first (input) layer. Also
 provides a selection of methods to implement forwards and backwards backpropagation, fit data and make predictions.
-The layers in the network are represented by the Layer class, which are joined-up in a Linked List by the Dense object.
+The layers in the network are represented by the Layer class, which are joined up in a Linked List by the Dense object.
 
 Currently Supported:
-    Loss functions: MSE, binary cross entropy
-    Activations: ReLU, Sigmoid
+    Loss functions: MSE, binary cross entropy, cross entropy
+    Activations: ReLU, Sigmoid, Softmax, Linear
     Optimisers: standard gradient descent, momentum
     Tuning: Grid Search
 
-TODO: more loss functions (absolute error etc.), more activations (softmax, tanh etc.), more optimisers
-(adam, RMSProp etc.)
+TODO: more loss functions (absolute error etc.), more activations (tanh etc.), more optimisers
+(adam, RMSProp etc.), dropout, improved tuner (to tune layer sizes etc.)
 
 Ian Wu
-31/10/2020
+14/12/2020
 """
 
 import numpy as np
@@ -58,81 +58,9 @@ class Layer:
         self.cache = None
         self.state = None
 
-    def set_data(self, data):
-        """Set the data"""
-        self.data = data
-
-    def get_data(self):
-        """Get the data"""
-        return self.data
-
-    def get_w(self):
-        """Get weight matrix"""
-        return self.w
-
-    def set_w(self, w):
-        """Set weight matrix"""
-        self.w = w
-
-    def get_b(self):
-        """Get bias vector"""
-        return self.b
-
-    def set_b(self, b):
-        """Set bias vector"""
-        self.b = b
-
-    def get_w_momentum(self):
-        """Get weight momentum"""
-        return self.w_momentum
-
-    def set_w_momentum(self, w_mom):
-        """Set weight momentum"""
-        self.w_momentum = w_mom
-
-    def get_b_momentum(self):
-        """Get bias momentum"""
-        return self.b_momentum
-
-    def set_b_momentum(self, b_mom):
-        """Set bias momentum"""
-        self.b_momentum = b_mom
-
-    def get_cache(self):
-        """Get the cache"""
-        return self.cache
-
-    def get_activation(self):
-        """Get the activation"""
-        return self.activation
-
-    def get_next_layer(self):
-        """Get the next layer"""
-        return self.next_layer
-
-    def set_next_layer(self, layer):
-        """Set the next layer"""
-        self.next_layer = layer
-
-    def set_prev_layer(self, layer):
-        """Set the previous layer"""
-        self.previous_layer = layer
-
-    def get_prev_layer(self):
-        """Get the previous layer"""
-        return self.previous_layer
-
-    def set_state(self, state):
-        """Set the state"""
-        self.state = state
-
-    def get_state(self):
-        """Get the state"""
-        return self.state
-
     def compute_data(self):
         """Transform the input into the layer (affine and then activation)"""
-        data = self.get_prev_layer().get_data()  # get the data from the layer before
+        data = self.previous_layer.data  # get the data from the layer before
         data = np.matmul(self.w, data) + self.b.reshape(-1, 1)  # affine transformation
         self.cache = data  # save the affine transform in self.cache
         self.data = self.activate(data)  # save the activated data in self.data
@@ -143,6 +71,10 @@ class Layer:
             return 1 / (1 + np.exp(-z))
         elif self.activation == 'relu':
             return np.maximum(0, z)
+        elif self.activation == 'softmax':
+            return np.exp(z) / np.sum(np.exp(z), axis=0)
+        elif self.activation == 'linear':
+            return z
 
     def gradient_descent(self, learning_rate, batch_size, d_cost_b, d_cost_w):
         """Performs a step of gradient descent for the layer, for weights and biases
@@ -152,10 +84,10 @@ class Layer:
                 d_cost_b: grad b
                 d_cost_w: grad w
         """
-        new_w = self.get_w() - (learning_rate * (1/batch_size) * d_cost_w)
-        self.set_w(new_w)  # update w as w := w - (learning_rate/batch_size) * grad_w
-        new_b = self.get_b() - (learning_rate * (1/batch_size) * d_cost_b)
-        self.set_b(new_b)  # update b as b := b - (learning_rate/batch_size) * grad_b
+        new_w = self.w - (learning_rate * (1/batch_size) * d_cost_w)
+        self.w = new_w  # update w as w := w - (learning_rate/batch_size) * grad_w
+        new_b = self.b - (learning_rate * (1/batch_size) * d_cost_b)
+        self.b = new_b  # update b as b := b - (learning_rate/batch_size) * grad_b
 
     def momentum(self, learning_rate, batch_size, decay_rate, d_cost_b, d_cost_w):
         """Performs a step of momentum gradient descent for the layer, for weights and biases
@@ -165,16 +97,15 @@ class Layer:
                 decay_rate: the decay rate for momentum
                 d_cost_b: grad b
                 d_cost_w: grad w
-
         """
         grad_desc_w = learning_rate * (1/batch_size) * d_cost_w  # standard descent for w
         grad_desc_b = learning_rate * (1/batch_size) * d_cost_b  # standard descent for b
-        delta_w = decay_rate * self.get_w_momentum() - grad_desc_w  # compute new w momentum
-        delta_b = decay_rate * self.get_b_momentum() - grad_desc_b  # compute new b momentum
-        self.set_w(self.get_w() + delta_w)  # update weights
-        self.set_b(self.get_b() + delta_b)  # update biases
-        self.set_w_momentum(delta_w)  # update w momentum
-        self.set_b_momentum(delta_b)  # update b momentum
+        delta_w = decay_rate * self.w_momentum - grad_desc_w  # compute new w momentum
+        delta_b = decay_rate * self.b_momentum - grad_desc_b  # compute new b momentum
+        self.w = self.w + delta_w  # update weights
+        self.b = self.b + delta_b  # update biases
+        self.w_momentum = delta_w  # update w momentum
+        self.b_momentum = delta_b  # update b momentum
 
 
 class Dense:
@@ -185,13 +116,14 @@ class Dense:
             loss: loss function for network
             metric: accuracy metric
             optimiser: optimiser for parameters
+            name: the name of the model (for saving)
     """
 
     def __init__(self):
         """Initialise the Dense object and the input layer"""
 
         self.head = Layer(activation=None, input_dim=None, output_dim=None)  # set the input layer on net initialisation
-        self.head.set_state('input')
+        self.head.state = 'input'
         self.tail = self.head
         self.loss = None
         self.metric = None
@@ -199,64 +131,72 @@ class Dense:
         self.name = None
 
     def set_name(self, name):
+        """Set the name of the network"""
         self.name = name
-
-    def get_name(self):
-        return self.name
 
     def add_layer(self, activation, input_dim, output_dim):
         """Add a layer to the neural network"""
         layer = Layer(activation, input_dim, output_dim)  # initialise the layer
-        layer.set_state('output')
-        layer.set_prev_layer(self.tail)  # connect the layer to the tail of the network
-        if layer.get_prev_layer().get_state() == 'output':  # set the new states
-            layer.get_prev_layer().set_state('hidden')
-        self.tail.set_next_layer(layer)  # connect the tail of the network to the layer
+        layer.state = 'output'
+        layer.previous_layer = self.tail  # connect the layer to the tail of the network
+        if layer.previous_layer.state == 'output':  # set the new states
+            layer.previous_layer.state = 'hidden'
+        self.tail.next_layer = layer  # connect the tail of the network to the layer
         self.tail = layer  # set the new layer as the tail
 
     def forward_propagate(self, input_data):
         """Perform a single pass of forward propagation"""
-        self.head.set_data(input_data)  # pass input data into the network
-        current_layer = self.head.get_next_layer()
+        self.head.data = input_data  # pass input data into the network
+        current_layer = self.head.next_layer
         # step through the network and compute the transformations on the data
         while current_layer:
             current_layer.compute_data()
-            current_layer = current_layer.get_next_layer()
+            current_layer = current_layer.next_layer
 
-        return self.tail.get_data()  # return the final transformed data
+        return self.tail.data  # return the final transformed data
+
+    def compute_out_grad(self, activation, current_layer, outputs, labels):
+        """Compute the gradient of the loss wrt. the final affine transformed data, dJ/dz_L"""
+        if self.loss == 'MSE' and activation == 'sigmoid':
+            del_l = (outputs - labels) * self.activation_prime(current_layer.cache, activation)
+        elif activation == 'linear':
+            del_l = outputs - labels
+        elif self.loss == 'binary_cross_entropy' and activation == 'sigmoid':
+            outputs[outputs == 0] += 1e-15  # prevent instability of log(0)
+            outputs[outputs == 1] -= 1e-15
+            del_l = outputs - labels
+        elif self.loss == 'cross_entropy' and activation == 'softmax':
+            outputs[outputs == 0] += 1e-15  # prevent instability of log(0)
+            outputs[outputs == 1] -= 1e-15
+            del_l = outputs - labels
+        else:
+            # only the above combination of output layers and losses are supported
+            raise ValueError('Loss/output activation combination unsupported')
+
+        return del_l
 
     def backward_propagate(self, outputs, labels, batch_size):
         """Perform a single pass of backward propagation"""
         current_layer = self.tail  # start at the tail (output layer L)
-        activation = current_layer.get_activation()
-        del_l = None
-        if self.loss == 'MSE':
-            del_l = (outputs - labels) * self.activation_prime(current_layer.get_cache(), activation)
-        elif self.loss == 'binary_cross_entropy':
-            outputs[outputs == 0] += 1e-15  # prevent instability of log(0)
-            outputs[outputs == 1] -= 1e-15
-            del_l = ((outputs - labels)/(outputs * (1 - outputs))) * \
-                    self.activation_prime(current_layer.get_cache(), activation)
-        # derivative of the loss wrt the affine transformed data of the output layer L
+        activation = current_layer.activation
+        del_l = self.compute_out_grad(activation, current_layer, outputs, labels)  # compute dJ/dz_L
         d_cost_b = np.sum(del_l, axis=1)  # derivative of cost wrt bias of output layer L
-        d_cost_w = np.matmul(del_l, current_layer.get_prev_layer().get_data().T)  # derivative of cost wrt
-        # weights of output layer L
-        # derivative of cost wrt weights of output layer L
+        d_cost_w = np.matmul(del_l, current_layer.previous_layer.data.T)  # derivative of cost wrt
         if self.optimiser[0] == 'gradient_descent':
             current_layer.gradient_descent(learning_rate=self.optimiser[1], batch_size=batch_size, d_cost_w=d_cost_w,
                                            d_cost_b=d_cost_b)
         elif self.optimiser[0] == 'momentum':
             current_layer.momentum(learning_rate=self.optimiser[1], batch_size=batch_size, d_cost_w=d_cost_w,
                                    d_cost_b=d_cost_b, decay_rate=self.optimiser[2])
-        current_layer = current_layer.get_prev_layer()
-        while current_layer.get_state() != 'input':
-            prev_layer = current_layer.get_prev_layer()
-            activation = current_layer.get_activation()
-            del_l = np.matmul(current_layer.get_next_layer().get_w().T, del_l) * \
-                    self.activation_prime(current_layer.get_cache(), activation)
+        current_layer = current_layer.previous_layer
+        while current_layer.state != 'input':
+            prev_layer = current_layer.previous_layer
+            activation = current_layer.activation
+            del_l = np.matmul(current_layer.next_layer.w.T, del_l) * \
+                    self.activation_prime(current_layer.cache, activation)
             # derivative of loss wrt affine transformation of lth layer
             d_cost_b = np.sum(del_l, axis=1)  # derivative of loss wrt lth layer bias
-            d_cost_w = np.matmul(del_l, prev_layer.get_data().T)  # derivative of loss wrt lth layer weights
+            d_cost_w = np.matmul(del_l, prev_layer.data.T)  # derivative of loss wrt lth layer weights
             if self.optimiser[0] == 'gradient_descent':
                 current_layer.gradient_descent(learning_rate=self.optimiser[1], batch_size=batch_size, d_cost_w=d_cost_w,
                                                d_cost_b=d_cost_b)
@@ -313,20 +253,18 @@ class Dense:
                 data_point = batch[0]
                 label = batch[1]
                 predictions = self.forward_propagate(data_point)  # forward prop with batch training data
-                if self.metric == 'binary_accuracy':
-                    epoch_metric += np.sum(np.round(predictions[0]) == label[0])
+                epoch_metric += self.count_correct(predictions, label)
                 epoch_loss += self.compute_loss(predictions, label, self.loss)  # get the loss
                 self.backward_propagate(predictions, label, batch_size=len(data_point[0]))  # back prop + optimise
             epoch_loss = epoch_loss/len(input_data)  # compute average loss for this epoch
             print('Epoch {} Complete'.format(epoch + 1))
             print('Epoch Training Loss: {}'.format(epoch_loss))
-            epoch_metric = float(epoch_metric/len(input_data))  # compute average metric for this epoch
-            if self.metric == 'binary_accuracy':
+            epoch_metric = float(100*epoch_metric/len(input_data))  # compute average metric for this epoch
+            if self.metric:
                 print('Epoch Training Accuracy: {}'.format(epoch_metric))
             final_results[0] = (epoch_loss, epoch_metric)  # store the final results
             if save_data:
                 save_train_results.append((epoch_loss, epoch_metric))  # record training loss/metric per epoch
-
             epoch += 1
 
             if validate:  # do validation step after every epoch if validate=True
@@ -339,12 +277,11 @@ class Dense:
                     label = batch[1]
                     predictions = self.predict(data_point)  # make prediction
                     validation_loss += self.compute_loss(predictions, label, self.loss)  # get loss
-                    if self.metric == 'binary_accuracy':  # get metric
-                        validation_metric += np.sum(np.round(predictions[0]) == label[0])
+                    validation_metric += self.count_correct(predictions, label)
                 validation_loss = validation_loss/len(validation_data)  # average validation loss for epoch
-                validation_metric = validation_metric/len(validation_data)  # average validation metric for epoch
+                validation_metric = 100*validation_metric/len(validation_data)  # average validation metric for epoch
                 print('Epoch Validation Loss: {}'.format(validation_loss))
-                if self.metric == 'binary_accuracy':
+                if self.metric:
                     print('Epoch Validation Accuracy: {}'.format(validation_metric))
                 final_results[1] = (validation_loss, validation_metric)  # store results
                 if save_data:
@@ -355,11 +292,11 @@ class Dense:
 
         # if save_data=True, dump all saved data to binary file
         if save_data:
-            training_name = self.get_name() + '_training'
+            training_name = self.name + '_training'
             with open(training_name, 'wb') as fp:
                 pickle.dump(save_train_results, fp)
             if validate:
-                val_name = self.get_name() + '_validation'
+                val_name = self.name + '_validation'
                 with open(val_name, 'wb') as fp:
                     pickle.dump(save_val_results, fp)
 
@@ -379,6 +316,22 @@ class Dense:
             outputs[outputs == 0] += 1e-15  # prevent instability of log(0)
             outputs[outputs == 1] -= 1e-15
             return -np.sum(labels * np.log(outputs) + (1 - labels) * np.log(1 - outputs))
+        elif loss == 'cross_entropy':
+            outputs[outputs == 0] += 1e-15  # prevent instability of log(0)
+            outputs[outputs == 1] -= 1e-15
+            return -np.sum(labels * np.log(outputs))
+
+    def count_correct(self, predictions, labels):
+        """Compute the number of correct predictions in the batch"""
+        correct = None
+        if self.metric == 'binary_accuracy':
+            correct = np.sum(np.round(predictions) == labels)
+        elif self.metric == 'accuracy':
+            prediction_max = np.argmax(predictions, axis=0)
+            labels_max = np.argmax(labels, axis=0)
+            correct = np.sum(prediction_max == labels_max)
+
+        return correct
 
     @staticmethod
     def generate_batch(input_data, labels, batch_size, shuffle_input):
@@ -408,6 +361,8 @@ class Dense:
             q[z > 0] = 1
             q[z <= 0] = 0
             return q
+        elif activation == 'linear':
+            return np.ones((z.shape[0], z.shape[1]))
 
 
 class GridSearchTuner:
@@ -426,6 +381,9 @@ class GridSearchTuner:
         self.decay_rates = [0]
         self.model = None
         self.best_params = None
+        self.optimiser = None
+        self.loss = None
+        self.metric = None
 
     def learning_rate_grid(self, grid):
         """Set the list of learning rates to try"""
@@ -443,11 +401,52 @@ class GridSearchTuner:
         """Set the model to tune (pre-compiled model)"""
         self.model = model
 
-    def get_best_params(self):
-        """Get the best parameters found from tuning"""
-        return self.best_params
+    def compile(self, optimiser, loss, metric):
+        """Compile the tuner. Set the optimiser, loss, metric, learning and decay rates
+            Parameters:
+                optimiser: optimiser for gradient descent ('gradient_descent'/'momentum')
+                loss: loss function ('MSE')
+                metric: (optional) accuracy metric ('binary_accuracy)
+        """
+        self.optimiser = optimiser
+        self.loss = loss
+        self.metric = metric
 
-    def search(self, training_data, labels, validation_data, validation_labels, epochs, optimiser, loss, metric):
+    def _cross_validate(self, cv, X, y, learning_rate, decay_rate, batch_size, epochs):
+        """Perform K-fold cross-validation. Returns the average loss"""
+        # shuffle the data and labels
+        indices = [i for i in range(0, len(X))]
+        shuffle_indices = np.arange(len(X))
+        np.random.shuffle(shuffle_indices)
+        shuffled_X = X[shuffle_indices]
+        shuffled_y = y[shuffle_indices]
+        n = len(X) // cv  # min. no. of samples in each fold
+        remainder = len(X) % cv  # the remainder in the last fold
+        val_loss_list = []
+        for partition in range(0, cv):
+            print('Cross-validating: fold {}...'.format(partition + 1))
+            if partition != cv - 1:  # for the first K - 1 folds...
+                val_indices = indices[partition * n: (partition + 1) * n]  # extract partition for val
+                train_indices = indices[: partition * n] + indices[(partition + 1) * n:]  # extract partition for train
+            else:
+                # for the final fold, we include the remainder
+                val_indices = indices[partition * n: (partition + 1) * n + remainder]  # extract partition for val
+                train_indices = indices[: partition * n] + indices[(partition + 1) * n + remainder:]  # extract partition for train
+            X_val = shuffled_X[val_indices]  # validation features for current fold
+            y_val = shuffled_y[val_indices]  # validation labels for current fold
+            X_train = shuffled_X[train_indices]  # training features for current fold
+            y_train = shuffled_y[train_indices]  # training labels for current fold
+            # build, train and validate neural network
+            self.model.compile(optimiser=self.optimiser, loss=self.loss, metric=self.metric,
+                               learning_rate=learning_rate, decay_rate=decay_rate)
+            results = self.model.fit(input_data=X_train, labels=y_train, epochs=epochs,
+                                     batch_size=batch_size, validation_data=X_val,
+                                     validation_labels=y_val, validate=True)
+            val_loss_list.append(results[1][0])
+
+        return np.mean(val_loss_list)
+
+    def search(self, training_data, labels, epochs, cv=None, validation_data=None, validation_labels=None):
         """Perform hyperparameter tuning on the selected model. Sets the best_params attribute"""
         optimal_loss = float('inf')
         best_params = [0, 0, 0]
@@ -457,18 +456,25 @@ class GridSearchTuner:
                 for decay_rate in self.decay_rates:
                     print('Testing Hyperparameters: Learning Rate = {}, Batch Size = {}, Momentum = {}'
                           .format(learning_rate, batch_size, decay_rate))
-                    self.model.compile(optimiser=optimiser, loss=loss, metric=metric,
-                                       learning_rate=learning_rate, decay_rate=decay_rate)
-                    results = self.model.fit(input_data=training_data, labels=labels, epochs=epochs,
-                                             batch_size=batch_size, validation_data=validation_data,
-                                             validation_labels=validation_labels, validate=True)
-                    if results[1][0] < optimal_loss:  # store the params if they yield the best results so far
-                        optimal_loss = results[1][0]
+                    if cv:
+                        # if cross-validation selected, find average val loss using k-fold cv on training data
+                        val_loss = self._cross_validate(cv, training_data, labels, learning_rate, decay_rate,
+                                                        batch_size, epochs)
+                    else:
+                        # if no cv, use the validation set for validation
+                        self.model.compile(optimiser=self.optimiser, loss=self.loss, metric=self.metric,
+                                           learning_rate=learning_rate, decay_rate=decay_rate)
+                        results = self.model.fit(input_data=training_data, labels=labels, epochs=epochs,
+                                                 batch_size=batch_size, validation_data=validation_data,
+                                                 validation_labels=validation_labels, validate=True)
+                        val_loss = results[1][0]
+                    if val_loss < optimal_loss:  # store the params if they yield the best results so far
+                        optimal_loss = val_loss
                         best_params[0] = learning_rate
                         best_params[1] = batch_size
                         best_params[2] = decay_rate
 
         self.best_params = best_params  # save the best params as an attribute of GridSearchTuner
-
+        print('Best hyperparameters found: {}'.format(best_params))
 
 
