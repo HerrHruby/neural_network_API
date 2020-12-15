@@ -221,7 +221,7 @@ class Dense:
         print(self.optimiser)
 
     def fit(self, input_data, labels, epochs, shuffle_input=True, shuffle_validate=True, batch_size=None,
-            validate=False, validation_data=None, validation_labels=None, save_data=False):
+            validate=False, validation_data=None, validation_labels=None, save_data=False, verbose=True):
         """Train the neural network on the training data. Optionally, perform validation after every epoch
             Parameters:
                 input_data: training data
@@ -234,14 +234,13 @@ class Dense:
                 validation_data: validation data
                 validation_labels: validation data labels
                 save_data: save the training and validation losses and metrics
+                verbose: print results of every epoch
         """
         epoch = 0
         final_results = [None, None]  # contains the final losses and metrics
         save_train_results = []  # for recording training loss/metric per epoch
         save_val_results = []  # for recording val loss/metric per epoch
         while epoch < epochs:
-            print('--------------------------------------------')
-            print('Epoch {}/{}'.format(epoch + 1, epochs))
             epoch_loss = 0
             epoch_metric = 0
             # if batch size not specified, assume full-batch
@@ -257,11 +256,14 @@ class Dense:
                 epoch_loss += self.compute_loss(predictions, label, self.loss)  # get the loss
                 self.backward_propagate(predictions, label, batch_size=len(data_point[0]))  # back prop + optimise
             epoch_loss = epoch_loss/len(input_data)  # compute average loss for this epoch
-            print('Epoch {} Complete'.format(epoch + 1))
-            print('Epoch Training Loss: {}'.format(epoch_loss))
             epoch_metric = float(100*epoch_metric/len(input_data))  # compute average metric for this epoch
-            if self.metric:
-                print('Epoch Training Accuracy: {}'.format(epoch_metric))
+            if verbose:
+                print('--------------------------------------------')
+                print('Epoch {}/{}'.format(epoch + 1, epochs))
+                print('Epoch {} Complete'.format(epoch + 1))
+                print('Epoch Training Loss: {}'.format(epoch_loss))
+                if self.metric:
+                    print('Epoch Training Accuracy: {}'.format(epoch_metric))
             final_results[0] = (epoch_loss, epoch_metric)  # store the final results
             if save_data:
                 save_train_results.append((epoch_loss, epoch_metric))  # record training loss/metric per epoch
@@ -280,15 +282,17 @@ class Dense:
                     validation_metric += self.count_correct(predictions, label)
                 validation_loss = validation_loss/len(validation_data)  # average validation loss for epoch
                 validation_metric = 100*validation_metric/len(validation_data)  # average validation metric for epoch
-                print('Epoch Validation Loss: {}'.format(validation_loss))
-                if self.metric:
-                    print('Epoch Validation Accuracy: {}'.format(validation_metric))
+                if verbose:
+                    print('Epoch Validation Loss: {}'.format(validation_loss))
+                    if self.metric:
+                        print('Epoch Validation Accuracy: {}'.format(validation_metric))
+                    print('--------------------------------------------')
                 final_results[1] = (validation_loss, validation_metric)  # store results
                 if save_data:
                     save_val_results.append((validation_loss, validation_metric))  # record val loss/metric per epoch
-            print('--------------------------------------------')
         print('Final Training Loss/Accuracy: {}'.format(final_results[0]))
         print('Final Validation Loss/Accuracy: {}'.format(final_results[1]))
+        print('--------------------------------------------')
 
         # if save_data=True, dump all saved data to binary file
         if save_data:
@@ -304,6 +308,9 @@ class Dense:
 
     def predict(self, input_data):
         """Predict on input data using the neural network"""
+        input_dim = self.head.next_layer.input_dim
+        if input_data.shape[0] != input_dim:
+            input_data = input_data.T
         prediction = self.forward_propagate(input_data)  # propagate data forward to make prediction
         return prediction
 
@@ -384,6 +391,7 @@ class GridSearchTuner:
         self.optimiser = None
         self.loss = None
         self.metric = None
+        self.layer_params = []
 
     def learning_rate_grid(self, grid):
         """Set the list of learning rates to try"""
@@ -397,8 +405,18 @@ class GridSearchTuner:
         """Set the list of decay rates to try"""
         self.decay_rates = grid
 
-    def set_model(self, model):
+    def add_layer(self, activation, input_dim, output_dim):
         """Set the model to tune (pre-compiled model)"""
+        layer = []
+        layer.append(activation)
+        layer.append(input_dim)
+        layer.append(output_dim)
+        self.layer_params.append(layer)
+
+    def build_model(self):
+        model = Dense()
+        for layer in self.layer_params:
+            model.add_layer(layer[0], layer[1], layer[2])
         self.model = model
 
     def compile(self, optimiser, loss, metric):
@@ -437,11 +455,12 @@ class GridSearchTuner:
             X_train = shuffled_X[train_indices]  # training features for current fold
             y_train = shuffled_y[train_indices]  # training labels for current fold
             # build, train and validate neural network
+            self.build_model()
             self.model.compile(optimiser=self.optimiser, loss=self.loss, metric=self.metric,
                                learning_rate=learning_rate, decay_rate=decay_rate)
             results = self.model.fit(input_data=X_train, labels=y_train, epochs=epochs,
                                      batch_size=batch_size, validation_data=X_val,
-                                     validation_labels=y_val, validate=True)
+                                     validation_labels=y_val, validate=True, verbose=False)
             val_loss_list.append(results[1][0])
 
         return np.mean(val_loss_list)
@@ -461,12 +480,13 @@ class GridSearchTuner:
                         val_loss = self._cross_validate(cv, training_data, labels, learning_rate, decay_rate,
                                                         batch_size, epochs)
                     else:
+                        self.build_model()
                         # if no cv, use the validation set for validation
                         self.model.compile(optimiser=self.optimiser, loss=self.loss, metric=self.metric,
                                            learning_rate=learning_rate, decay_rate=decay_rate)
                         results = self.model.fit(input_data=training_data, labels=labels, epochs=epochs,
                                                  batch_size=batch_size, validation_data=validation_data,
-                                                 validation_labels=validation_labels, validate=True)
+                                                 validation_labels=validation_labels, validate=True, verbose=False)
                         val_loss = results[1][0]
                     if val_loss < optimal_loss:  # store the params if they yield the best results so far
                         optimal_loss = val_loss
