@@ -456,7 +456,6 @@ class GridSearchTuner:
             X_train = shuffled_X[train_indices]  # training features for current fold
             y_train = shuffled_y[train_indices]  # training labels for current fold
             # build, train and validate neural network
-            self.build_model()
             self.model.compile(optimiser=self.optimiser, loss=self.loss, metric=self.metric,
                                learning_rate=learning_rate, decay_rate=decay_rate)
             results = self.model.fit(input_data=X_train, labels=y_train, epochs=epochs,
