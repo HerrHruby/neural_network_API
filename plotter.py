@@ -16,24 +16,36 @@ def plotter(train_name, validation_name):
     val_loss = [i[0] for i in validation_data]
     val_acc = [i[1] for i in validation_data]
 
-    plt.scatter(X, train_loss, s=6, label='Training Loss')
+    plt.scatter(X, train_loss, s=12, label='Training Loss', marker='x')
     plt.scatter(X, val_loss, s=6, label='Validation loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
     plt.show()
 
-    plt.scatter(X, train_acc, s=6, label='Training Loss')
-    plt.scatter(X, val_acc, s=6, label='Training Loss')
+    # fig, ax = plt.subplots()
+    # ax.ticklabel_format(useOffset=False)
+    # ax.scatter(X, train_loss, s=12, label='Training Loss', marker='x')
+    # ax.scatter(X, val_loss, s=6, label='Validation loss')
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Loss')
+    # plt.legend()
+    # plt.show()
+
+    plt.scatter(X, train_acc, s=12, label='Training Accuracy', marker='x')
+    plt.scatter(X, val_acc, s=6, label='Validation Accuracy')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
     plt.legend()
     plt.show()
 
+    print(train_loss)
+    print(val_loss)
+
 
 if __name__ == '__main__':
-    train_file = 'test_name_training'
-    validation_file = 'test_name_validation'
+    train_file = 'data/test_name_training'
+    validation_file = 'data/test_name_validation'
     plotter(train_file, validation_file)
 
 
