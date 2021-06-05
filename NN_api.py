@@ -413,7 +413,7 @@ class GridSearchTuner:
         layer.append(output_dim)
         self.layer_params.append(layer)
 
-    def build_model(self):
+    def _build_model(self):
         model = Dense()
         for layer in self.layer_params:
             model.add_layer(layer[0], layer[1], layer[2])
@@ -429,6 +429,7 @@ class GridSearchTuner:
         self.optimiser = optimiser
         self.loss = loss
         self.metric = metric
+        self._build_model()
 
     def _cross_validate(self, cv, X, y, learning_rate, decay_rate, batch_size, epochs):
         """Perform K-fold cross-validation. Returns the average loss"""
