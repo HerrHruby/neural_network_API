@@ -1,21 +1,23 @@
 # neural_network_API
-A simple API for feedforward deep neural networks
+A simple API for feedforward deep neural networks, written in Python
 
 The NN classes are held in NN_api.py. An example
 neural network is constructed in main.py (used on 
 a binary classification MNIST fashion dataset)
 
 Currently supports the following:
-    - Loss functions: cross entropy, binary cross entropy, MSE
-    - Activations: sigmoid, ReLU, Linear, softmax
-    - Optimisers: vanilla gradient descent, momentum
-    - Hyperparameter Tuning: Automatic Tuner
+- Loss functions: cross entropy, binary cross entropy, MSE
+- Activations: sigmoid, ReLU, Linear, softmax
+- Optimisers: vanilla gradient descent, momentum
+- Hyperparameter Tuning: Automatic Tuner
     
 ## Example
 
 To train a simple Neural Network:
 
 ```python
+    import NN_api
+
     model = NN_api.Dense()  # initialise network
     model.add_layer('relu', 784, 256)  # add layers
     model.add_layer('sigmoid', 256, 1)
@@ -30,6 +32,8 @@ To train a simple Neural Network:
 To use the automatic tuner:
 
 ```python
+    import NN_api
+    
     # automatic hyperparameter tuning
     tuner = NN_api.GridSearchTuner()  # create tuner object
     tuner.add_layer('relu', 784, 256)  # add layers
